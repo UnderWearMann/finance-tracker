@@ -10,9 +10,7 @@ from typing import Optional, List
 import re
 import json
 
-from config import GOOGLE_SHEETS_CREDENTIALS_FILE, SPREADSHEET_NAME, DEFAULT_CATEGORIES
-
-CATEGORIES = DEFAULT_CATEGORIES
+from config import GOOGLE_SHEETS_CREDENTIALS_FILE, SPREADSHEET_NAME, DEFAULT_CATEGORIES as CATEGORIES
 
 
 # Google Sheets API scopes
@@ -323,19 +321,13 @@ def get_categories() -> List[str]:
 
             # Skip header row, get category names from first column
             categories = [row[0] for row in data[1:] if row and row[0].strip()]
-            return categories if categories else DEFAULT_CATEGORIES
-
-CATEGORIES = DEFAULT_CATEGORIES
+            return categories if categories else CATEGORIES
 
         except gspread.WorksheetNotFound:
-            return DEFAULT_CATEGORIES
-
-CATEGORIES = DEFAULT_CATEGORIES
+            return CATEGORIES
 
     except Exception:
-        return DEFAULT_CATEGORIES
-
-CATEGORIES = DEFAULT_CATEGORIES
+        return CATEGORIES
 
 
 def add_category(name: str) -> bool:
