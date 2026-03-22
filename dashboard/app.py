@@ -14,7 +14,7 @@ import json
 
 # Add parent directory to path for importing learning module
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from src.learning import capture_correction
+from src.learning import capture_correction, capture_corrections_bulk
 from src.sheets_sync import get_latest_insights
 from src.forecaster import generate_forecast
 from src.ai_insights import explain_anomaly
@@ -905,19 +905,18 @@ def render_transaction_editor(df: pd.DataFrame, categories: list):
 
                 if st.button("Apply to Selected", type="primary"):
                     if update_transaction_categories_bulk(selected_ids, new_category):
-                        # Capture for learning
+                        # Capture for learning - batch version to avoid rate limits
+                        corrections = []
                         for tx_id in selected_ids:
                             tx_row = bulk_df[bulk_df['ID'] == tx_id].iloc[0]
-                            original_cat = tx_row['Category']
-                            merchant = tx_row['Merchant'] if 'Merchant' in bulk_df.columns else ''
-                            description = tx_row['Description']
+                            corrections.append({
+                                'merchant': tx_row['Merchant'] if 'Merchant' in bulk_df.columns else '',
+                                'description': tx_row['Description'],
+                                'old_category': tx_row['Category'],
+                                'new_category': new_category
+                            })
 
-                            capture_correction(
-                                merchant=merchant,
-                                description=description,
-                                old_category=original_cat,
-                                new_category=new_category
-                            )
+                        capture_corrections_bulk(corrections)
 
                         st.success(f"Updated {len(selected_ids)} transactions to '{new_category}'")
                         st.cache_data.clear()

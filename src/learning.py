@@ -71,6 +71,48 @@ def match_learned_rules(merchant: str, description: str) -> Optional[str]:
     return None
 
 
+def capture_corrections_bulk(corrections: List[Dict]) -> bool:
+    """
+    Capture multiple category corrections at once.
+
+    Args:
+        corrections: List of dicts with merchant, description, old_category, new_category
+
+    Returns:
+        True if successful
+    """
+    if not corrections:
+        return False
+
+    # Process each correction to extract patterns
+    rules_to_save = []
+    for corr in corrections:
+        if corr['old_category'] == corr['new_category']:
+            continue
+
+        merchant = corr['merchant']
+        merchant_pattern = re.sub(r'[#*]\s*\d+.*$', '', merchant).strip()
+        if not merchant_pattern:
+            merchant_pattern = merchant[:20] if merchant else ""
+
+        rules_to_save.append({
+            'merchant_pattern': merchant_pattern,
+            'description_pattern': corr['description'][:50] if corr['description'] else "",
+            'old_category': corr['old_category'],
+            'new_category': corr['new_category']
+        })
+
+    if not rules_to_save:
+        return False
+
+    try:
+        from .sheets_sync import save_learning_rules_bulk
+        return save_learning_rules_bulk(rules_to_save)
+    except Exception as e:
+        print(f"Error saving learning rules in bulk: {e}")
+        return False
+
+
 def get_conflicting_rules() -> List[Dict]:
     """Find rules with conflicting categories for the same merchant."""
     rules = get_learning_rules()

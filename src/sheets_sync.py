@@ -516,6 +516,110 @@ def save_learning_rule_to_sheet(merchant_pattern: str, description_pattern: str,
         return False
 
 
+def save_learning_rules_bulk(rules: List[dict]) -> bool:
+    """
+    Save multiple learning rules in one batch operation.
+
+    Args:
+        rules: List of {merchant_pattern, description_pattern, old_category, new_category}
+    """
+    if not rules:
+        return False
+
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        rules_sheet = setup_learning_rules_sheet(spreadsheet)
+
+        existing_rules = rules_sheet.get_all_records()
+        now = datetime.now().isoformat()
+
+        # Build lookup of existing rules
+        existing_lookup = {}
+        for i, rule in enumerate(existing_rules, start=2):
+            key = (rule.get("Merchant Pattern", "").upper(), rule.get("Corrected Category", ""))
+            existing_lookup[key] = {
+                'row': i,
+                'confidence': rule.get("Confidence", 0),
+                'version': rule.get("Version", 1)
+            }
+
+        # Track version numbers per merchant
+        version_by_merchant = {}
+        for rule in existing_rules:
+            merchant = rule.get("Merchant Pattern", "").upper()
+            version = rule.get("Version", 1)
+            version_by_merchant[merchant] = max(version_by_merchant.get(merchant, 0), version)
+
+        # Prepare batch updates and new rows
+        batch_updates = []
+        new_rows = []
+
+        for rule_data in rules:
+            merchant_pattern = rule_data['merchant_pattern']
+            key = (merchant_pattern.upper(), rule_data['new_category'])
+
+            if key in existing_lookup:
+                # Update existing rule - increment confidence
+                existing = existing_lookup[key]
+                row_num = existing['row']
+                new_confidence = existing['confidence'] + 1
+                batch_updates.append({
+                    'range': f'E{row_num}',
+                    'values': [[new_confidence]]
+                })
+                batch_updates.append({
+                    'range': f'G{row_num}',
+                    'values': [[now]]
+                })
+            else:
+                # New rule
+                merchant_upper = merchant_pattern.upper()
+                version = version_by_merchant.get(merchant_upper, 0) + 1
+                version_by_merchant[merchant_upper] = version
+
+                new_rows.append([
+                    rule_data['merchant_pattern'],
+                    rule_data['description_pattern'],
+                    rule_data['old_category'],
+                    rule_data['new_category'],
+                    1,  # Confidence
+                    now,  # Created At
+                    now,  # Last Used
+                    version,  # Version
+                    True  # Active
+                ])
+
+        # Execute batch operations
+        if batch_updates:
+            rules_sheet.batch_update(batch_updates)
+        if new_rows:
+            rules_sheet.append_rows(new_rows)
+
+        return True
+    except Exception as e:
+        print(f"Error saving learning rules in bulk: {e}")
+        return False
+
+
+def get_conflicting_rules() -> List[Dict]:
+    """Find rules with conflicting categories for the same merchant."""
+    rules = get_learning_rules()
+    by_merchant = {}
+    for rule in rules:
+        pattern = rule.get("Merchant Pattern", "").upper()
+        if pattern:
+            if pattern not in by_merchant:
+                by_merchant[pattern] = []
+            by_merchant[pattern].append(rule)
+    conflicts = []
+    for pattern, pattern_rules in by_merchant.items():
+        categories = set(r.get("Corrected Category") for r in pattern_rules)
+        if len(categories) > 1:
+            conflicts.append({"pattern": pattern, "rules": pattern_rules, "categories": list(categories)})
+    return conflicts
+
+
 # ============================================
 # Insights Sheet Functions
 # ============================================
