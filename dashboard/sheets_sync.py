@@ -4,11 +4,15 @@ Syncs parsed transactions to Google Sheets
 """
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import Optional, List
+import re
+import json
 
 from config import GOOGLE_SHEETS_CREDENTIALS_FILE, SPREADSHEET_NAME, DEFAULT_CATEGORIES
+
+CATEGORIES = DEFAULT_CATEGORIES
 
 
 # Google Sheets API scopes
@@ -27,34 +31,27 @@ def get_sheets_client():
     try:
         import streamlit as st
         if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
-            # Convert Streamlit secrets object to dict
-            service_account_info = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(
-                service_account_info,
+                st.secrets["gcp_service_account"],
                 scopes=SCOPES
             )
             return gspread.authorize(creds)
-    except ImportError:
-        pass  # Not running in Streamlit
+    except Exception:
+        pass  # Not running in Streamlit or no secrets configured
 
     # Fall back to local credentials file
-    if Path(GOOGLE_SHEETS_CREDENTIALS_FILE).exists():
-        creds = Credentials.from_service_account_file(
-            str(GOOGLE_SHEETS_CREDENTIALS_FILE),
-            scopes=SCOPES
-        )
-        return gspread.authorize(creds)
-
-    # If neither secrets nor file available, raise error
-    raise FileNotFoundError(
-        "No credentials found. Either set up Streamlit secrets or provide credentials.json"
+    creds = Credentials.from_service_account_file(
+        str(GOOGLE_SHEETS_CREDENTIALS_FILE),
+        scopes=SCOPES
     )
+    return gspread.authorize(creds)
 
 
 def get_or_create_spreadsheet(client: gspread.Client) -> gspread.Spreadsheet:
     """Get existing spreadsheet or create new one."""
     try:
         spreadsheet = client.open(SPREADSHEET_NAME)
+        print(f"Found existing spreadsheet: {SPREADSHEET_NAME}")
         # Ensure structure exists for existing spreadsheets
         try:
             spreadsheet.worksheet("Transactions")
@@ -62,6 +59,7 @@ def get_or_create_spreadsheet(client: gspread.Client) -> gspread.Spreadsheet:
             setup_spreadsheet_structure(spreadsheet)
     except gspread.SpreadsheetNotFound:
         spreadsheet = client.create(SPREADSHEET_NAME)
+        print(f"Created new spreadsheet: {SPREADSHEET_NAME}")
         setup_spreadsheet_structure(spreadsheet)
 
     return spreadsheet
@@ -70,7 +68,7 @@ def get_or_create_spreadsheet(client: gspread.Client) -> gspread.Spreadsheet:
 def setup_spreadsheet_structure(spreadsheet: gspread.Spreadsheet):
     """Set up initial spreadsheet structure with required sheets."""
 
-    # Transactions sheet - with new columns for CC payment tracking
+    # Transactions sheet - with new columns for CC payment tracking and institution
     try:
         transactions = spreadsheet.worksheet("Transactions")
     except gspread.WorksheetNotFound:
@@ -112,7 +110,7 @@ def setup_spreadsheet_structure(spreadsheet: gspread.Spreadsheet):
         categories = spreadsheet.add_worksheet("Categories", rows=50, cols=4)
 
     categories.update('A1:D1', [["Category", "Budget (Monthly)", "Color", "Notes"]])
-    category_data = [[cat, "", "", ""] for cat in DEFAULT_CATEGORIES]
+    category_data = [[cat, "", "", ""] for cat in CATEGORIES]
     if category_data:
         categories.update(f'A2:D{len(category_data)+1}', category_data)
 
@@ -140,6 +138,8 @@ def setup_spreadsheet_structure(spreadsheet: gspread.Spreadsheet):
         spreadsheet.del_worksheet(default_sheet)
     except gspread.WorksheetNotFound:
         pass
+
+    print("Spreadsheet structure created successfully")
 
 
 def generate_transaction_id(date: str, amount: float, description: str) -> str:
@@ -205,14 +205,16 @@ def sync_parsed_data(parsed_data: dict) -> dict:
     if new_transactions:
         transactions_sheet.append_rows(new_transactions)
 
-    # Update account last statement date
+    # Update account last statement date with enhanced metadata
     update_account_info(spreadsheet, account_name, statement_info)
 
     return {
         "new_transactions": len(new_transactions),
         "duplicates_skipped": duplicates,
         "account": account_name,
-        "period": period
+        "period": period,
+        "institution": institution,
+        "account_type": statement_info.get("account_type", "unknown")
     }
 
 
@@ -290,13 +292,13 @@ def get_categories() -> List[str]:
 
             # Skip header row, get category names from first column
             categories = [row[0] for row in data[1:] if row and row[0].strip()]
-            return categories if categories else DEFAULT_CATEGORIES
+            return categories if categories else CATEGORIES
 
         except gspread.WorksheetNotFound:
-            return DEFAULT_CATEGORIES
+            return CATEGORIES
 
     except Exception:
-        return DEFAULT_CATEGORIES
+        return CATEGORIES
 
 
 def add_category(name: str) -> bool:
@@ -319,95 +321,6 @@ def add_category(name: str) -> bool:
         # Append new category
         categories_sheet.append_row([name, "", "", ""])
         return True
-
-    except Exception:
-        return False
-
-
-def delete_category(name: str) -> bool:
-    """Delete a category from the Categories sheet."""
-    try:
-        client = get_sheets_client()
-        spreadsheet = get_or_create_spreadsheet(client)
-        categories_sheet = spreadsheet.worksheet("Categories")
-
-        data = categories_sheet.get_all_values()
-
-        # Find and delete the row
-        for i, row in enumerate(data[1:], start=2):
-            if row and row[0] == name:
-                categories_sheet.delete_rows(i)
-                return True
-
-        return False
-
-    except Exception:
-        return False
-
-
-def update_transaction_category(tx_id: str, new_category: str) -> bool:
-    """Update the category of a single transaction."""
-    try:
-        client = get_sheets_client()
-        spreadsheet = get_or_create_spreadsheet(client)
-        transactions_sheet = spreadsheet.worksheet("Transactions")
-
-        data = transactions_sheet.get_all_values()
-        header = data[0]
-
-        # Find the category column index
-        try:
-            cat_col_idx = header.index("Category")
-        except ValueError:
-            cat_col_idx = 5  # Default position
-
-        # Find the transaction row
-        for i, row in enumerate(data[1:], start=2):
-            if row and row[0] == tx_id:
-                # Update category cell (column is 1-indexed in gspread)
-                col_letter = chr(ord('A') + cat_col_idx)
-                transactions_sheet.update(f'{col_letter}{i}', [[new_category]])
-                return True
-
-        return False
-
-    except Exception:
-        return False
-
-
-def update_transaction_categories_bulk(tx_ids: List[str], new_category: str) -> bool:
-    """Update the category of multiple transactions."""
-    try:
-        client = get_sheets_client()
-        spreadsheet = get_or_create_spreadsheet(client)
-        transactions_sheet = spreadsheet.worksheet("Transactions")
-
-        data = transactions_sheet.get_all_values()
-        header = data[0]
-
-        # Find the category column index
-        try:
-            cat_col_idx = header.index("Category")
-        except ValueError:
-            cat_col_idx = 5
-
-        col_letter = chr(ord('A') + cat_col_idx)
-
-        # Batch update - collect all updates
-        updates = []
-        for i, row in enumerate(data[1:], start=2):
-            if row and row[0] in tx_ids:
-                updates.append({
-                    'range': f'{col_letter}{i}',
-                    'values': [[new_category]]
-                })
-
-        if updates:
-            # Use batch_update for efficiency
-            transactions_sheet.batch_update(updates)
-            return True
-
-        return False
 
     except Exception:
         return False
@@ -455,8 +368,6 @@ def add_category_rule(merchant_pattern: str, category: str, auto_apply: bool = T
 
 def apply_category_rules(transactions: List[dict]) -> List[dict]:
     """Apply category rules to a list of transactions."""
-    import re
-
     rules = get_category_rules()
     if not rules:
         return transactions
@@ -480,3 +391,289 @@ def apply_category_rules(transactions: List[dict]) -> List[dict]:
                 break
 
     return transactions
+
+
+# ============================================
+# FX Rates Sheet Functions
+# ============================================
+
+def setup_fx_rates_sheet(spreadsheet: gspread.Spreadsheet):
+    """Set up FX Rates sheet structure."""
+    try:
+        fx_sheet = spreadsheet.worksheet("FX Rates")
+    except gspread.WorksheetNotFound:
+        fx_sheet = spreadsheet.add_worksheet("FX Rates", rows=500, cols=5)
+        fx_sheet.update('A1:D1', [["Date", "From Currency", "To HKD Rate", "Source"]])
+    return fx_sheet
+
+
+def get_fx_rates_from_sheet() -> dict:
+    """Get all cached FX rates. Returns {date_str: {currency: rate}}."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        try:
+            fx_sheet = spreadsheet.worksheet("FX Rates")
+        except gspread.WorksheetNotFound:
+            return {}
+        records = fx_sheet.get_all_records()
+        rates_by_date = {}
+        for record in records:
+            date_str = str(record.get("Date", ""))
+            currency = record.get("From Currency", "")
+            rate = record.get("To HKD Rate", 0)
+            if date_str and currency and rate:
+                if date_str not in rates_by_date:
+                    rates_by_date[date_str] = {}
+                rates_by_date[date_str][currency] = float(rate)
+        return rates_by_date
+    except Exception as e:
+        print(f"Error getting FX rates: {e}")
+        return {}
+
+
+def save_fx_rate(rate_date: date, from_currency: str, rate: float, source: str) -> bool:
+    """Save an FX rate to the FX Rates sheet."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        fx_sheet = setup_fx_rates_sheet(spreadsheet)
+        date_str = rate_date.strftime("%Y-%m-%d")
+        fx_sheet.append_row([date_str, from_currency, rate, source])
+        return True
+    except Exception as e:
+        print(f"Error saving FX rate: {e}")
+        return False
+
+
+# ============================================
+# Learning Rules Sheet Functions
+# ============================================
+
+def setup_learning_rules_sheet(spreadsheet: gspread.Spreadsheet):
+    """Set up Learning Rules sheet structure."""
+    try:
+        rules_sheet = spreadsheet.worksheet("Learning Rules")
+    except gspread.WorksheetNotFound:
+        rules_sheet = spreadsheet.add_worksheet("Learning Rules", rows=500, cols=10)
+        rules_sheet.update('A1:I1', [[
+            "Merchant Pattern", "Description Pattern", "Original Category",
+            "Corrected Category", "Confidence", "Created At", "Last Used",
+            "Version", "Active"
+        ]])
+    return rules_sheet
+
+
+def get_learning_rules_from_sheet() -> list:
+    """Get all learning rules from the Learning Rules sheet."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        try:
+            rules_sheet = spreadsheet.worksheet("Learning Rules")
+        except gspread.WorksheetNotFound:
+            return []
+        return rules_sheet.get_all_records()
+    except Exception as e:
+        print(f"Error getting learning rules: {e}")
+        return []
+
+
+def save_learning_rule_to_sheet(merchant_pattern: str, description_pattern: str, old_category: str, new_category: str) -> bool:
+    """Save a learning rule. If exists for same pattern+category, increment confidence."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        rules_sheet = setup_learning_rules_sheet(spreadsheet)
+
+        existing_rules = rules_sheet.get_all_records()
+        row_to_update = None
+        existing_version = 0
+        existing_confidence = 0
+
+        for i, rule in enumerate(existing_rules, start=2):
+            if rule.get("Merchant Pattern", "").upper() == merchant_pattern.upper():
+                if rule.get("Corrected Category") == new_category:
+                    row_to_update = i
+                    existing_confidence = rule.get("Confidence", 0)
+                    existing_version = rule.get("Version", 1)
+                    break
+                else:
+                    existing_version = max(existing_version, rule.get("Version", 1))
+
+        now = datetime.now().isoformat()
+
+        if row_to_update:
+            rules_sheet.update(f'E{row_to_update}', [[existing_confidence + 1]])
+            rules_sheet.update(f'G{row_to_update}', [[now]])
+            return True
+        else:
+            rules_sheet.append_row([
+                merchant_pattern, description_pattern, old_category, new_category,
+                1, now, now, existing_version + 1, True
+            ])
+            return True
+    except Exception as e:
+        print(f"Error saving learning rule: {e}")
+        return False
+
+
+def save_learning_rules_bulk(rules: List[dict]) -> bool:
+    """
+    Save multiple learning rules in one batch operation.
+
+    Args:
+        rules: List of {merchant_pattern, description_pattern, old_category, new_category}
+    """
+    if not rules:
+        return False
+
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        rules_sheet = setup_learning_rules_sheet(spreadsheet)
+
+        existing_rules = rules_sheet.get_all_records()
+        now = datetime.now().isoformat()
+
+        # Build lookup of existing rules
+        existing_lookup = {}
+        for i, rule in enumerate(existing_rules, start=2):
+            key = (rule.get("Merchant Pattern", "").upper(), rule.get("Corrected Category", ""))
+            existing_lookup[key] = {
+                'row': i,
+                'confidence': rule.get("Confidence", 0),
+                'version': rule.get("Version", 1)
+            }
+
+        # Track version numbers per merchant
+        version_by_merchant = {}
+        for rule in existing_rules:
+            merchant = rule.get("Merchant Pattern", "").upper()
+            version = rule.get("Version", 1)
+            version_by_merchant[merchant] = max(version_by_merchant.get(merchant, 0), version)
+
+        # Prepare batch updates and new rows
+        batch_updates = []
+        new_rows = []
+
+        for rule_data in rules:
+            merchant_pattern = rule_data['merchant_pattern']
+            key = (merchant_pattern.upper(), rule_data['new_category'])
+
+            if key in existing_lookup:
+                # Update existing rule - increment confidence
+                existing = existing_lookup[key]
+                row_num = existing['row']
+                new_confidence = existing['confidence'] + 1
+                batch_updates.append({
+                    'range': f'E{row_num}',
+                    'values': [[new_confidence]]
+                })
+                batch_updates.append({
+                    'range': f'G{row_num}',
+                    'values': [[now]]
+                })
+            else:
+                # New rule
+                merchant_upper = merchant_pattern.upper()
+                version = version_by_merchant.get(merchant_upper, 0) + 1
+                version_by_merchant[merchant_upper] = version
+
+                new_rows.append([
+                    rule_data['merchant_pattern'],
+                    rule_data['description_pattern'],
+                    rule_data['old_category'],
+                    rule_data['new_category'],
+                    1,  # Confidence
+                    now,  # Created At
+                    now,  # Last Used
+                    version,  # Version
+                    True  # Active
+                ])
+
+        # Execute batch operations
+        if batch_updates:
+            rules_sheet.batch_update(batch_updates)
+        if new_rows:
+            rules_sheet.append_rows(new_rows)
+
+        return True
+    except Exception as e:
+        print(f"Error saving learning rules in bulk: {e}")
+        return False
+
+
+def get_conflicting_rules() -> List[Dict]:
+    """Find rules with conflicting categories for the same merchant."""
+    rules = get_learning_rules()
+    by_merchant = {}
+    for rule in rules:
+        pattern = rule.get("Merchant Pattern", "").upper()
+        if pattern:
+            if pattern not in by_merchant:
+                by_merchant[pattern] = []
+            by_merchant[pattern].append(rule)
+    conflicts = []
+    for pattern, pattern_rules in by_merchant.items():
+        categories = set(r.get("Corrected Category") for r in pattern_rules)
+        if len(categories) > 1:
+            conflicts.append({"pattern": pattern, "rules": pattern_rules, "categories": list(categories)})
+    return conflicts
+
+
+# ============================================
+# Insights Sheet Functions
+# ============================================
+
+def setup_insights_sheet(spreadsheet: gspread.Spreadsheet):
+    """Set up Insights sheet structure."""
+    try:
+        insights_sheet = spreadsheet.worksheet("Insights")
+    except gspread.WorksheetNotFound:
+        insights_sheet = spreadsheet.add_worksheet("Insights", rows=200, cols=8)
+        insights_sheet.update('A1:G1', [[
+            "Week Start", "Week End", "Digest", "Top Insights",
+            "Forecast 3M", "Anomalies", "Generated At"
+        ]])
+    return insights_sheet
+
+
+def save_insight_to_sheet(digest: dict) -> bool:
+    """Save a weekly digest to the Insights sheet."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        insights_sheet = setup_insights_sheet(spreadsheet)
+
+        insights_sheet.append_row([
+            digest.get("week_start", ""),
+            digest.get("week_end", ""),
+            digest.get("summary", ""),
+            json.dumps(digest.get("highlights", [])),
+            json.dumps(digest.get("forecast", {})),
+            json.dumps(digest.get("unusual_patterns", [])),
+            digest.get("generated_at", datetime.now().isoformat())
+        ])
+        return True
+    except Exception as e:
+        print(f"Error saving insight: {e}")
+        return False
+
+
+def get_latest_insights(limit: int = 5) -> list:
+    """Get the most recent insights."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+
+        try:
+            insights_sheet = spreadsheet.worksheet("Insights")
+        except gspread.WorksheetNotFound:
+            return []
+
+        records = insights_sheet.get_all_records()
+        return list(reversed(records[-limit:]))
+    except Exception as e:
+        print(f"Error getting insights: {e}")
+        return []
