@@ -441,3 +441,75 @@ def save_fx_rate(rate_date: date, from_currency: str, rate: float, source: str) 
     except Exception as e:
         print(f"Error saving FX rate: {e}")
         return False
+
+
+# ============================================
+# Learning Rules Sheet Functions
+# ============================================
+
+def setup_learning_rules_sheet(spreadsheet: gspread.Spreadsheet):
+    """Set up Learning Rules sheet structure."""
+    try:
+        rules_sheet = spreadsheet.worksheet("Learning Rules")
+    except gspread.WorksheetNotFound:
+        rules_sheet = spreadsheet.add_worksheet("Learning Rules", rows=500, cols=10)
+        rules_sheet.update('A1:I1', [[
+            "Merchant Pattern", "Description Pattern", "Original Category",
+            "Corrected Category", "Confidence", "Created At", "Last Used",
+            "Version", "Active"
+        ]])
+    return rules_sheet
+
+
+def get_learning_rules_from_sheet() -> list:
+    """Get all learning rules from the Learning Rules sheet."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        try:
+            rules_sheet = spreadsheet.worksheet("Learning Rules")
+        except gspread.WorksheetNotFound:
+            return []
+        return rules_sheet.get_all_records()
+    except Exception as e:
+        print(f"Error getting learning rules: {e}")
+        return []
+
+
+def save_learning_rule_to_sheet(merchant_pattern: str, description_pattern: str, old_category: str, new_category: str) -> bool:
+    """Save a learning rule. If exists for same pattern+category, increment confidence."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        rules_sheet = setup_learning_rules_sheet(spreadsheet)
+
+        existing_rules = rules_sheet.get_all_records()
+        row_to_update = None
+        existing_version = 0
+        existing_confidence = 0
+
+        for i, rule in enumerate(existing_rules, start=2):
+            if rule.get("Merchant Pattern", "").upper() == merchant_pattern.upper():
+                if rule.get("Corrected Category") == new_category:
+                    row_to_update = i
+                    existing_confidence = rule.get("Confidence", 0)
+                    existing_version = rule.get("Version", 1)
+                    break
+                else:
+                    existing_version = max(existing_version, rule.get("Version", 1))
+
+        now = datetime.now().isoformat()
+
+        if row_to_update:
+            rules_sheet.update(f'E{row_to_update}', [[existing_confidence + 1]])
+            rules_sheet.update(f'G{row_to_update}', [[now]])
+            return True
+        else:
+            rules_sheet.append_row([
+                merchant_pattern, description_pattern, old_category, new_category,
+                1, now, now, existing_version + 1, True
+            ])
+            return True
+    except Exception as e:
+        print(f"Error saving learning rule: {e}")
+        return False
