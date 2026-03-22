@@ -221,6 +221,14 @@ def sync_parsed_data(parsed_data: dict) -> dict:
     # Update account last statement date with enhanced metadata
     update_account_info(spreadsheet, account_name, statement_info)
 
+    # Auto-sync cash withdrawals to Cash Transactions sheet
+    try:
+        cash_count = sync_cash_withdrawals_to_cash_sheet(spreadsheet)
+        if cash_count > 0:
+            print(f"  Synced {cash_count} cash withdrawal(s) to Cash Transactions sheet")
+    except Exception as e:
+        print(f"  Warning: Could not sync cash withdrawals: {e}")
+
     return {
         "new_transactions": len(new_transactions),
         "duplicates_skipped": duplicates,
@@ -649,6 +657,113 @@ def get_conflicting_rules() -> List[Dict]:
         if len(categories) > 1:
             conflicts.append({"pattern": pattern, "rules": pattern_rules, "categories": list(categories)})
     return conflicts
+
+
+# ============================================
+# Cash Transactions Functions
+# ============================================
+
+def sync_cash_withdrawals_to_cash_sheet(spreadsheet: gspread.Spreadsheet) -> int:
+    """Auto-populate Cash Transactions with ATM withdrawals from Transactions sheet."""
+    transactions_sheet = spreadsheet.worksheet("Transactions")
+    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    all_txs = transactions_sheet.get_all_records()
+    withdrawals = [tx for tx in all_txs if tx.get("Category") == "Cash Withdrawal" and tx.get("Amount", 0) < 0]
+
+    existing_cash = cash_sheet.get_all_records()
+    existing_ids = set(row.get("Cash TX ID") for row in existing_cash if row.get("Type") == "Withdrawal")
+
+    new_cash_txs = []
+    for wtx in withdrawals:
+        cash_tx_id = f"W_{wtx['ID']}"
+        if cash_tx_id in existing_ids:
+            continue
+
+        withdrawal_amount = abs(wtx.get("Amount", 0))
+        new_cash_txs.append([
+            cash_tx_id,
+            wtx.get("Date", ""),
+            "Withdrawal",
+            wtx.get("Description", ""),
+            withdrawal_amount,
+            wtx.get("Currency", "HKD"),
+            "Cash Withdrawal",
+            "",
+            wtx.get("Date", ""),
+            withdrawal_amount,
+            withdrawal_amount,
+            wtx.get("Account", ""),
+            datetime.now().isoformat()
+        ])
+
+    if new_cash_txs:
+        cash_sheet.append_rows(new_cash_txs)
+
+    return len(new_cash_txs)
+
+
+def get_cash_withdrawals_with_balance() -> list:
+    """Get withdrawals with calculated remaining balance."""
+    client = get_sheets_client()
+    spreadsheet = get_or_create_spreadsheet(client)
+    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    records = cash_sheet.get_all_records()
+    withdrawals = [r for r in records if r.get("Type") == "Withdrawal"]
+
+    for w in withdrawals:
+        w_id = w["Cash TX ID"]
+        linked_spends = [r for r in records if r.get("Linked Withdrawal ID") == w_id]
+        spent = sum(s.get("Amount", 0) for s in linked_spends)
+        w["Actual Remaining"] = w.get("Withdrawal Amount", 0) - spent
+        w["Fully Allocated"] = w["Actual Remaining"] <= 0
+
+    return withdrawals
+
+
+def get_cash_spends_for_withdrawal(withdrawal_id: str) -> list:
+    """Get spends for a specific withdrawal."""
+    client = get_sheets_client()
+    spreadsheet = get_or_create_spreadsheet(client)
+    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    records = cash_sheet.get_all_records()
+    return [r for r in records if r.get("Linked Withdrawal ID") == withdrawal_id]
+
+
+def add_cash_spend(withdrawal_id: str, date: str, description: str, amount: float, category: str, currency: str = "HKD") -> dict:
+    """Add manual cash spend linked to withdrawal."""
+    import hashlib
+
+    client = get_sheets_client()
+    spreadsheet = get_or_create_spreadsheet(client)
+    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    cash_records = cash_sheet.get_all_records()
+    withdrawal = next((r for r in cash_records if r.get("Cash TX ID") == withdrawal_id), None)
+
+    if not withdrawal:
+        return {"success": False, "message": "Withdrawal not found"}
+
+    # Calculate current remaining
+    linked_spends = [r for r in cash_records if r.get("Linked Withdrawal ID") == withdrawal_id]
+    spent = sum(s.get("Amount", 0) for s in linked_spends)
+    current_remaining = withdrawal.get("Withdrawal Amount", 0) - spent
+
+    if amount > current_remaining:
+        return {"success": False, "message": f"Insufficient cash. Remaining: ${current_remaining:,.2f}", "remaining_balance": current_remaining}
+
+    spend_id = f"S_{hashlib.md5(f'{date}{description}{amount}'.encode()).hexdigest()[:8]}"
+
+    cash_sheet.append_row([
+        spend_id, date, "Spend", description, amount, currency, category,
+        withdrawal_id, withdrawal.get("Withdrawal Date", ""),
+        withdrawal.get("Withdrawal Amount", 0), 0,
+        withdrawal.get("Source Account", ""), datetime.now().isoformat()
+    ])
+
+    return {"success": True, "remaining_balance": current_remaining - amount, "message": f"Added. Remaining: ${current_remaining - amount:,.2f}"}
 
 
 # ============================================
