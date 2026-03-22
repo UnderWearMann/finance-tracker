@@ -32,15 +32,21 @@ def get_sheets_client():
                 scopes=SCOPES
             )
             return gspread.authorize(creds)
-    except Exception:
-        pass  # Not running in Streamlit or no secrets configured
+    except ImportError:
+        pass  # Not running in Streamlit
 
     # Fall back to local credentials file
-    creds = Credentials.from_service_account_file(
-        str(GOOGLE_SHEETS_CREDENTIALS_FILE),
-        scopes=SCOPES
+    if Path(GOOGLE_SHEETS_CREDENTIALS_FILE).exists():
+        creds = Credentials.from_service_account_file(
+            str(GOOGLE_SHEETS_CREDENTIALS_FILE),
+            scopes=SCOPES
+        )
+        return gspread.authorize(creds)
+
+    # If neither secrets nor file available, raise error
+    raise FileNotFoundError(
+        "No credentials found. Either set up Streamlit secrets or provide credentials.json"
     )
-    return gspread.authorize(creds)
 
 
 def get_or_create_spreadsheet(client: gspread.Client) -> gspread.Spreadsheet:
