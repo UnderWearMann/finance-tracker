@@ -393,6 +393,66 @@ def apply_category_rules(transactions: List[dict]) -> List[dict]:
     return transactions
 
 
+def update_transaction_category(tx_id: str, new_category: str) -> bool:
+    """Update the category of a single transaction."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        transactions_sheet = spreadsheet.worksheet("Transactions")
+
+        data = transactions_sheet.get_all_values()
+        header = data[0]
+
+        try:
+            cat_col_idx = header.index("Category")
+        except ValueError:
+            cat_col_idx = 5
+
+        for i, row in enumerate(data[1:], start=2):
+            if row and row[0] == tx_id:
+                col_letter = chr(ord('A') + cat_col_idx)
+                transactions_sheet.update(f'{col_letter}{i}', [[new_category]])
+                return True
+
+        return False
+    except Exception:
+        return False
+
+
+def update_transaction_categories_bulk(tx_ids: List[str], new_category: str) -> bool:
+    """Update the category of multiple transactions."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        transactions_sheet = spreadsheet.worksheet("Transactions")
+
+        data = transactions_sheet.get_all_values()
+        header = data[0]
+
+        try:
+            cat_col_idx = header.index("Category")
+        except ValueError:
+            cat_col_idx = 5
+
+        col_letter = chr(ord('A') + cat_col_idx)
+
+        updates = []
+        for i, row in enumerate(data[1:], start=2):
+            if row and row[0] in tx_ids:
+                updates.append({
+                    'range': f'{col_letter}{i}',
+                    'values': [[new_category]]
+                })
+
+        if updates:
+            transactions_sheet.batch_update(updates)
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
 # ============================================
 # FX Rates Sheet Functions
 # ============================================
