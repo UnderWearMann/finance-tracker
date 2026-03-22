@@ -1,0 +1,23 @@
+# Credentials - NEVER commit these
+credentials.json
+*.json.backup
+
+# Environment
+.env
+.venv
+venv/
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+
+# Logs
+logs/*.log
+
+# Local data
+statements/
+processed/
+
+# Streamlit
+.streamlit/secrets.toml
