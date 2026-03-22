@@ -992,12 +992,26 @@ def render_cash_tab():
     """Render Cash tab with per-account cash pools."""
     st.markdown('<div class="section-header"><h2>💵 Cash Tracking</h2></div>', unsafe_allow_html=True)
 
-    from sheets_sync import get_cash_balance_by_account, add_cash_spend, get_categories
+    from sheets_sync import get_cash_balance_by_account, add_cash_spend, get_categories, sync_cash_withdrawals_to_cash_sheet, get_sheets_client, get_or_create_spreadsheet
 
     balances = get_cash_balance_by_account()
 
     if not balances:
-        st.info("No cash withdrawals found. ATM withdrawals from statements will appear here automatically.")
+        st.info("No cash withdrawals found in Cash Transactions sheet.")
+        st.markdown("If you have existing cash withdrawals in your transactions, sync them:")
+        if st.button("🔄 Sync Existing Cash Withdrawals", type="primary"):
+            try:
+                client = get_sheets_client()
+                spreadsheet = get_or_create_spreadsheet(client)
+                count = sync_cash_withdrawals_to_cash_sheet(spreadsheet)
+                if count > 0:
+                    st.success(f"✅ Synced {count} cash withdrawal(s)!")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.warning("No cash withdrawals found in Transactions sheet")
+            except Exception as e:
+                st.error(f"Error syncing: {e}")
         return
 
     # Summary metrics
