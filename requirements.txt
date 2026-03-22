@@ -1,0 +1,25 @@
+# PDF Processing
+anthropic>=0.39.0
+pypdf>=4.0.0
+
+# Google Sheets
+gspread>=6.0.0
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0
+
+# Dashboard
+streamlit>=1.30.0
+plotly>=5.18.0
+pandas>=2.0.0
+
+# Utilities
+python-dateutil>=2.8.0
+
+# Testing
+pytest>=8.0.0
+pytest-mock>=3.12.0
+
+# New dependencies for AI enhancements
+Pillow>=10.0.0
+pillow-heif>=0.14.0
+requests>=2.31.0
