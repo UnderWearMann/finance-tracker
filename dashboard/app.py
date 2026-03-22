@@ -988,6 +988,109 @@ def render_insights_tab():
                 st.markdown(f"**Trend:** {trends['overall']}")
 
 
+def render_cash_tab():
+    """Render Cash tab with withdrawals and spend entry."""
+    st.markdown('<div class="section-header"><h2>💵 Cash Tracking</h2></div>', unsafe_allow_html=True)
+
+    from sheets_sync import get_cash_withdrawals_with_balance, get_cash_spends_for_withdrawal, add_cash_spend, get_categories
+
+    withdrawals = get_cash_withdrawals_with_balance()
+
+    if not withdrawals:
+        st.info("No cash withdrawals found. ATM withdrawals from statements will appear here automatically.")
+        return
+
+    # Summary metrics
+    total_withdrawn = sum(w.get("Withdrawal Amount", 0) for w in withdrawals)
+    total_remaining = sum(w.get("Actual Remaining", 0) for w in withdrawals)
+    total_spent = total_withdrawn - total_remaining
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Withdrawn", f"${total_withdrawn:,.0f}")
+    with col2:
+        st.metric("Cash Spent", f"${total_spent:,.0f}")
+    with col3:
+        st.metric("Cash Remaining", f"${total_remaining:,.0f}")
+
+    st.markdown("---")
+
+    # Two columns: withdrawals list + add spend form
+    col_left, col_right = st.columns([1, 1])
+
+    with col_left:
+        st.markdown("### ATM Withdrawals")
+        for w in sorted(withdrawals, key=lambda x: x.get("Date", ""), reverse=True):
+            remaining = w.get("Actual Remaining", 0)
+            amount = w.get("Withdrawal Amount", 0)
+            allocated_pct = ((amount - remaining) / amount * 100) if amount > 0 else 0
+
+            color = "#04d38c" if remaining <= 0 else "#1a73e8"
+
+            st.markdown(f"""
+            <div style="border-left: 4px solid {color}; background: white; border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-weight: 600; color: #1e293b;">{w.get('Date')}</div>
+                        <div style="font-size: 0.875rem; color: #64748b;">{w.get('Source Account')}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 1.25rem; font-weight: 700; color: #1e293b;">${amount:,.0f}</div>
+                        <div style="font-size: 0.875rem; color: {'#04d38c' if remaining <= 0 else '#ef4444'};">${remaining:,.0f} left</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            with st.expander(f"View spends from this withdrawal"):
+                spends = get_cash_spends_for_withdrawal(w["Cash TX ID"])
+                if spends:
+                    df_spends = pd.DataFrame(spends)[['Date', 'Description', 'Amount', 'Category']]
+                    st.dataframe(df_spends, hide_index=True, use_container_width=True)
+                else:
+                    st.info("No spends recorded yet")
+
+    with col_right:
+        st.markdown("### Add Cash Spend")
+
+        available_withdrawals = {
+            f"{w['Date']} - ${w.get('Withdrawal Amount', 0):,.0f} (${w.get('Actual Remaining', 0):,.0f} left)": w['Cash TX ID']
+            for w in withdrawals if w.get('Actual Remaining', 0) > 0
+        }
+
+        if not available_withdrawals:
+            st.warning("All withdrawals fully allocated. Make a new ATM withdrawal to add cash spends.")
+        else:
+            selected_display = st.selectbox("From Withdrawal", list(available_withdrawals.keys()))
+            selected_id = available_withdrawals[selected_display]
+
+            selected_w = next(w for w in withdrawals if w['Cash TX ID'] == selected_id)
+            max_amt = selected_w.get('Actual Remaining', 0)
+
+            st.info(f"Available cash: ${max_amt:,.2f}")
+
+            with st.form("add_cash_form"):
+                spend_date = st.date_input("Date", value=datetime.now().date())
+                spend_desc = st.text_input("Description", placeholder="Coffee, taxi, groceries, etc.")
+                spend_amt = st.number_input("Amount", min_value=0.01, max_value=float(max_amt), step=0.01)
+
+                cats = get_categories()
+                cash_cats = [c for c in cats if c not in ["Cash Withdrawal", "Transfer", "Income", "Credit Card Payment"]]
+                spend_cat = st.selectbox("Category", cash_cats)
+
+                if st.form_submit_button("Add Cash Spend", type="primary"):
+                    if not spend_desc:
+                        st.error("Please enter a description")
+                    else:
+                        result = add_cash_spend(selected_id, spend_date.strftime("%Y-%m-%d"), spend_desc, spend_amt, spend_cat)
+                        if result["success"]:
+                            st.success(result["message"])
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error(result["message"])
+
+
 def main():
     # Header
     st.markdown("""
@@ -1080,7 +1183,7 @@ def main():
     render_stats_bar(total_expenses, total_income, net, tx_count)
 
     # Create tabs
-    tab1, tab2, tab3 = st.tabs(["Overview", "Transactions", "Insights"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Transactions", "Insights", "Cash"])
 
     with tab1:
         # Charts section
@@ -1126,6 +1229,10 @@ def main():
     with tab3:
         # AI Insights tab
         render_insights_tab()
+
+    with tab4:
+        # Cash Tracking tab
+        render_cash_tab()
 
     # Footer
     st.markdown("---")
