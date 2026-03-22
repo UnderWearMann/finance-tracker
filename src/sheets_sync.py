@@ -8,6 +8,7 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Optional, List
 import re
+import json
 
 from .config import GOOGLE_SHEETS_CREDENTIALS_FILE, SPREADSHEET_NAME, CATEGORIES
 
@@ -513,3 +514,60 @@ def save_learning_rule_to_sheet(merchant_pattern: str, description_pattern: str,
     except Exception as e:
         print(f"Error saving learning rule: {e}")
         return False
+
+
+# ============================================
+# Insights Sheet Functions
+# ============================================
+
+def setup_insights_sheet(spreadsheet: gspread.Spreadsheet):
+    """Set up Insights sheet structure."""
+    try:
+        insights_sheet = spreadsheet.worksheet("Insights")
+    except gspread.WorksheetNotFound:
+        insights_sheet = spreadsheet.add_worksheet("Insights", rows=200, cols=8)
+        insights_sheet.update('A1:G1', [[
+            "Week Start", "Week End", "Digest", "Top Insights",
+            "Forecast 3M", "Anomalies", "Generated At"
+        ]])
+    return insights_sheet
+
+
+def save_insight_to_sheet(digest: dict) -> bool:
+    """Save a weekly digest to the Insights sheet."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+        insights_sheet = setup_insights_sheet(spreadsheet)
+
+        insights_sheet.append_row([
+            digest.get("week_start", ""),
+            digest.get("week_end", ""),
+            digest.get("summary", ""),
+            json.dumps(digest.get("highlights", [])),
+            json.dumps(digest.get("forecast", {})),
+            json.dumps(digest.get("unusual_patterns", [])),
+            digest.get("generated_at", datetime.now().isoformat())
+        ])
+        return True
+    except Exception as e:
+        print(f"Error saving insight: {e}")
+        return False
+
+
+def get_latest_insights(limit: int = 5) -> list:
+    """Get the most recent insights."""
+    try:
+        client = get_sheets_client()
+        spreadsheet = get_or_create_spreadsheet(client)
+
+        try:
+            insights_sheet = spreadsheet.worksheet("Insights")
+        except gspread.WorksheetNotFound:
+            return []
+
+        records = insights_sheet.get_all_records()
+        return list(reversed(records[-limit:]))
+    except Exception as e:
+        print(f"Error getting insights: {e}")
+        return []
