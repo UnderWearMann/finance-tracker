@@ -130,6 +130,17 @@ def setup_spreadsheet_structure(spreadsheet: gspread.Spreadsheet):
         "Month", "Total Income", "Total Expenses", "Net"
     ]])
 
+    # Cash Transactions sheet
+    try:
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
+    except gspread.WorksheetNotFound:
+        cash_sheet = spreadsheet.add_worksheet("Cash Transactions", rows=500, cols=13)
+        cash_sheet.update('A1:M1', [[
+            "Cash TX ID", "Date", "Type", "Description", "Amount", "Currency",
+            "Category", "Linked Withdrawal ID", "Withdrawal Date",
+            "Withdrawal Amount", "Remaining Balance", "Source Account", "Created At"
+        ]])
+
     # Delete default Sheet1 if it exists
     try:
         default_sheet = spreadsheet.worksheet("Sheet1")

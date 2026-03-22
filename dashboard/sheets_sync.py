@@ -132,6 +132,17 @@ def setup_spreadsheet_structure(spreadsheet: gspread.Spreadsheet):
         "Month", "Total Income", "Total Expenses", "Net"
     ]])
 
+    # Cash Transactions sheet
+    try:
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
+    except gspread.WorksheetNotFound:
+        cash_sheet = spreadsheet.add_worksheet("Cash Transactions", rows=500, cols=13)
+        cash_sheet.update('A1:M1', [[
+            "Cash TX ID", "Date", "Type", "Description", "Amount", "Currency",
+            "Category", "Linked Withdrawal ID", "Withdrawal Date",
+            "Withdrawal Amount", "Remaining Balance", "Source Account", "Created At"
+        ]])
+
     # Delete default Sheet1 if it exists
     try:
         default_sheet = spreadsheet.worksheet("Sheet1")
@@ -312,13 +323,19 @@ def get_categories() -> List[str]:
 
             # Skip header row, get category names from first column
             categories = [row[0] for row in data[1:] if row and row[0].strip()]
-            return categories if categories else CATEGORIES
+            return categories if categories else DEFAULT_CATEGORIES
+
+CATEGORIES = DEFAULT_CATEGORIES
 
         except gspread.WorksheetNotFound:
-            return CATEGORIES
+            return DEFAULT_CATEGORIES
+
+CATEGORIES = DEFAULT_CATEGORIES
 
     except Exception:
-        return CATEGORIES
+        return DEFAULT_CATEGORIES
+
+CATEGORIES = DEFAULT_CATEGORIES
 
 
 def add_category(name: str) -> bool:
