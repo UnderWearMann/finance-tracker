@@ -6,7 +6,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 import re
 import json
 
