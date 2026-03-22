@@ -27,8 +27,10 @@ def get_sheets_client():
     try:
         import streamlit as st
         if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+            # Convert Streamlit secrets object to dict
+            service_account_info = dict(st.secrets["gcp_service_account"])
             creds = Credentials.from_service_account_info(
-                st.secrets["gcp_service_account"],
+                service_account_info,
                 scopes=SCOPES
             )
             return gspread.authorize(creds)
