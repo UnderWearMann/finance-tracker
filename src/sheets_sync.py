@@ -707,7 +707,12 @@ def get_cash_withdrawals_with_balance() -> list:
     """Get withdrawals with calculated remaining balance."""
     client = get_sheets_client()
     spreadsheet = get_or_create_spreadsheet(client)
-    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    try:
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
+    except gspread.WorksheetNotFound:
+        setup_spreadsheet_structure(spreadsheet)
+        return []
 
     records = cash_sheet.get_all_records()
     withdrawals = [r for r in records if r.get("Type") == "Withdrawal"]
@@ -726,7 +731,11 @@ def get_cash_spends_for_withdrawal(withdrawal_id: str) -> list:
     """Get spends for a specific withdrawal."""
     client = get_sheets_client()
     spreadsheet = get_or_create_spreadsheet(client)
-    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    try:
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
+    except gspread.WorksheetNotFound:
+        return []
 
     records = cash_sheet.get_all_records()
     return [r for r in records if r.get("Linked Withdrawal ID") == withdrawal_id]
@@ -738,7 +747,12 @@ def add_cash_spend(withdrawal_id: str, date: str, description: str, amount: floa
 
     client = get_sheets_client()
     spreadsheet = get_or_create_spreadsheet(client)
-    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    try:
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
+    except gspread.WorksheetNotFound:
+        setup_spreadsheet_structure(spreadsheet)
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
 
     cash_records = cash_sheet.get_all_records()
     withdrawal = next((r for r in cash_records if r.get("Cash TX ID") == withdrawal_id), None)

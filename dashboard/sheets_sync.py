@@ -363,66 +363,6 @@ def add_category(name: str) -> bool:
         return False
 
 
-def update_transaction_category(tx_id: str, new_category: str) -> bool:
-    """Update the category of a single transaction."""
-    try:
-        client = get_sheets_client()
-        spreadsheet = get_or_create_spreadsheet(client)
-        transactions_sheet = spreadsheet.worksheet("Transactions")
-
-        data = transactions_sheet.get_all_values()
-        header = data[0]
-
-        try:
-            cat_col_idx = header.index("Category")
-        except ValueError:
-            cat_col_idx = 5
-
-        for i, row in enumerate(data[1:], start=2):
-            if row and row[0] == tx_id:
-                col_letter = chr(ord('A') + cat_col_idx)
-                transactions_sheet.update(f'{col_letter}{i}', [[new_category]])
-                return True
-
-        return False
-    except Exception:
-        return False
-
-
-def update_transaction_categories_bulk(tx_ids: List[str], new_category: str) -> bool:
-    """Update the category of multiple transactions."""
-    try:
-        client = get_sheets_client()
-        spreadsheet = get_or_create_spreadsheet(client)
-        transactions_sheet = spreadsheet.worksheet("Transactions")
-
-        data = transactions_sheet.get_all_values()
-        header = data[0]
-
-        try:
-            cat_col_idx = header.index("Category")
-        except ValueError:
-            cat_col_idx = 5
-
-        col_letter = chr(ord('A') + cat_col_idx)
-
-        updates = []
-        for i, row in enumerate(data[1:], start=2):
-            if row and row[0] in tx_ids:
-                updates.append({
-                    'range': f'{col_letter}{i}',
-                    'values': [[new_category]]
-                })
-
-        if updates:
-            transactions_sheet.batch_update(updates)
-            return True
-
-        return False
-    except Exception:
-        return False
-
-
 # ============================================
 # Category Rules Functions
 # ============================================
@@ -767,7 +707,12 @@ def get_cash_withdrawals_with_balance() -> list:
     """Get withdrawals with calculated remaining balance."""
     client = get_sheets_client()
     spreadsheet = get_or_create_spreadsheet(client)
-    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    try:
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
+    except gspread.WorksheetNotFound:
+        setup_spreadsheet_structure(spreadsheet)
+        return []
 
     records = cash_sheet.get_all_records()
     withdrawals = [r for r in records if r.get("Type") == "Withdrawal"]
@@ -786,7 +731,11 @@ def get_cash_spends_for_withdrawal(withdrawal_id: str) -> list:
     """Get spends for a specific withdrawal."""
     client = get_sheets_client()
     spreadsheet = get_or_create_spreadsheet(client)
-    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    try:
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
+    except gspread.WorksheetNotFound:
+        return []
 
     records = cash_sheet.get_all_records()
     return [r for r in records if r.get("Linked Withdrawal ID") == withdrawal_id]
@@ -798,7 +747,12 @@ def add_cash_spend(withdrawal_id: str, date: str, description: str, amount: floa
 
     client = get_sheets_client()
     spreadsheet = get_or_create_spreadsheet(client)
-    cash_sheet = spreadsheet.worksheet("Cash Transactions")
+
+    try:
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
+    except gspread.WorksheetNotFound:
+        setup_spreadsheet_structure(spreadsheet)
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
 
     cash_records = cash_sheet.get_all_records()
     withdrawal = next((r for r in cash_records if r.get("Cash TX ID") == withdrawal_id), None)
