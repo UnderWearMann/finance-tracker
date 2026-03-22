@@ -14,10 +14,10 @@ import json
 
 # Add parent directory to path for importing learning module
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from src.learning import capture_correction, capture_corrections_bulk
-from src.sheets_sync import get_latest_insights
-from src.forecaster import generate_forecast
-from src.ai_insights import explain_anomaly
+from learning import capture_correction, capture_corrections_bulk
+from sheets_sync import get_latest_insights
+from forecaster import generate_forecast
+from ai_insights import explain_anomaly
 
 from sheets_sync import (
     get_all_transactions, get_account_info, get_categories,
