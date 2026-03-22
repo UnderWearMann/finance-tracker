@@ -84,12 +84,17 @@ Carefully analyze the statement to determine:
    - "American Express", "AMEX", "Visa", "Mastercard"
    - Identify from letterhead, logo text, or statement header
 
-3. For credit cards specifically:
-   - card_last_four: Last 4 digits of card number if visible (e.g., "1234")
-   - card_scheme: "Visa", "Mastercard", "AMEX", "UnionPay", or "Unknown"
-   - credit_limit: Credit limit if shown
-   - minimum_payment: Minimum payment due if shown
-   - statement_balance: Total statement balance
+3. Account Identification (CRITICAL - extract for ALL account types):
+   - account_last_four: Last 4 digits of account/card number (REQUIRED)
+     * Look in statement header, footer, account summary section
+     * For credit cards: card number ending digits (e.g., "1234")
+     * For bank accounts: account number ending digits (e.g., "5678")
+     * Format: "1234" (4 digits only, no dashes or spaces)
+   - For credit cards, also extract:
+     * card_scheme: "Visa", "Mastercard", "AMEX", "UnionPay", or "Unknown"
+     * credit_limit: Credit limit if shown
+     * minimum_payment: Minimum payment due if shown
+     * statement_balance: Total statement balance
 
 4. For all statements:
    - opening_balance: Opening/previous balance
@@ -110,7 +115,7 @@ Return as JSON with this structure:
         "period_end": "YYYY-MM-DD",
         "account_type": "bank_checking|bank_savings|credit_card|investment",
         "institution_name": "Bank/Card Name",
-        "card_last_four": "1234" or null,
+        "account_last_four": "1234",
         "card_scheme": "Visa|Mastercard|AMEX|UnionPay" or null,
         "opening_balance": number or null,
         "closing_balance": number or null,
