@@ -1149,6 +1149,8 @@ def main():
     # Exclude CC payments from analysis
     exclude_cc_payments = st.sidebar.checkbox("Exclude CC Payments", value=True,
                                               help="Exclude credit card payments to avoid double-counting")
+    exclude_cash_withdrawals = st.sidebar.checkbox("Exclude Cash Withdrawals", value=False,
+                                                   help="Exclude ATM withdrawals (tracked separately in Cash tab)")
 
     # Category management
     render_category_management(categories)
@@ -1163,6 +1165,8 @@ def main():
         mask &= df['Original Currency'] == selected_currency
     if exclude_cc_payments and 'Is CC Payment' in df.columns:
         mask &= ~df['Is CC Payment']
+    if exclude_cash_withdrawals:
+        mask &= df['Category'] != 'Cash Withdrawal'
 
     filtered_df = df[mask]
 
