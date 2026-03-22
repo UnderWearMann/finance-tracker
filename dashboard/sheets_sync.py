@@ -801,8 +801,40 @@ def get_cash_spends_for_withdrawal(withdrawal_id: str) -> list:
     return [r for r in records if r.get("Linked Withdrawal ID") == withdrawal_id]
 
 
-def add_cash_spend(withdrawal_id: str, date: str, description: str, amount: float, category: str, currency: str = "HKD") -> dict:
-    """Add manual cash spend linked to withdrawal."""
+def get_cash_balance_by_account() -> dict:
+    """Get cash balance aggregated by account (simple approach)."""
+    client = get_sheets_client()
+    spreadsheet = get_or_create_spreadsheet(client)
+
+    try:
+        cash_sheet = spreadsheet.worksheet("Cash Transactions")
+    except gspread.WorksheetNotFound:
+        return {}
+
+    records = cash_sheet.get_all_records()
+
+    # Aggregate by account
+    balances = {}
+    for record in records:
+        account = record.get("Source Account", "Unknown")
+        rec_type = record.get("Type", "")
+        amount = record.get("Amount", 0)
+
+        if account not in balances:
+            balances[account] = {"withdrawn": 0, "spent": 0, "remaining": 0}
+
+        if rec_type == "Withdrawal":
+            balances[account]["withdrawn"] += amount
+        elif rec_type == "Spend":
+            balances[account]["spent"] += amount
+
+        balances[account]["remaining"] = balances[account]["withdrawn"] - balances[account]["spent"]
+
+    return balances
+
+
+def add_cash_spend(account_id: str, date: str, description: str, amount: float, category: str, currency: str = "HKD") -> dict:
+    """Add manual cash spend to an account's cash pool."""
     import hashlib
 
     client = get_sheets_client()
@@ -814,30 +846,36 @@ def add_cash_spend(withdrawal_id: str, date: str, description: str, amount: floa
         setup_spreadsheet_structure(spreadsheet)
         cash_sheet = spreadsheet.worksheet("Cash Transactions")
 
-    cash_records = cash_sheet.get_all_records()
-    withdrawal = next((r for r in cash_records if r.get("Cash TX ID") == withdrawal_id), None)
+    # Get account balance
+    balances = get_cash_balance_by_account()
 
-    if not withdrawal:
-        return {"success": False, "message": "Withdrawal not found"}
+    if account_id not in balances:
+        return {"success": False, "message": f"No cash withdrawals found for {account_id}"}
 
-    # Calculate current remaining
-    linked_spends = [r for r in cash_records if r.get("Linked Withdrawal ID") == withdrawal_id]
-    spent = sum(s.get("Amount", 0) for s in linked_spends)
-    current_remaining = withdrawal.get("Withdrawal Amount", 0) - spent
+    current_remaining = balances[account_id]["remaining"]
 
     if amount > current_remaining:
-        return {"success": False, "message": f"Insufficient cash. Remaining: ${current_remaining:,.2f}", "remaining_balance": current_remaining}
+        return {"success": False, "message": f"Insufficient cash. Available: ${current_remaining:,.2f}", "remaining_balance": current_remaining}
 
     spend_id = f"S_{hashlib.md5(f'{date}{description}{amount}'.encode()).hexdigest()[:8]}"
 
+    # Find oldest withdrawal with remaining balance (FIFO)
+    cash_records = cash_sheet.get_all_records()
+    withdrawals = [r for r in cash_records if r.get("Source Account") == account_id and r.get("Type") == "Withdrawal"]
+    withdrawals.sort(key=lambda x: x.get("Date", ""))
+
+    # Use first withdrawal for linking (FIFO logic)
+    first_withdrawal = withdrawals[0] if withdrawals else None
+    withdrawal_id = first_withdrawal.get("Cash TX ID", "") if first_withdrawal else ""
+    withdrawal_date = first_withdrawal.get("Date", "") if first_withdrawal else date
+
     cash_sheet.append_row([
         spend_id, date, "Spend", description, amount, currency, category,
-        withdrawal_id, withdrawal.get("Withdrawal Date", ""),
-        withdrawal.get("Withdrawal Amount", 0), 0,
-        withdrawal.get("Source Account", ""), datetime.now().isoformat()
+        withdrawal_id, withdrawal_date, 0, 0, account_id, datetime.now().isoformat()
     ])
 
-    return {"success": True, "remaining_balance": current_remaining - amount, "message": f"Added. Remaining: ${current_remaining - amount:,.2f}"}
+    new_remaining = current_remaining - amount
+    return {"success": True, "remaining_balance": new_remaining, "message": f"Added. {account_id} cash remaining: ${new_remaining:,.2f}"}
 
 
 # ============================================

@@ -989,21 +989,21 @@ def render_insights_tab():
 
 
 def render_cash_tab():
-    """Render Cash tab with withdrawals and spend entry."""
+    """Render Cash tab with per-account cash pools."""
     st.markdown('<div class="section-header"><h2>💵 Cash Tracking</h2></div>', unsafe_allow_html=True)
 
-    from sheets_sync import get_cash_withdrawals_with_balance, get_cash_spends_for_withdrawal, add_cash_spend, get_categories
+    from sheets_sync import get_cash_balance_by_account, add_cash_spend, get_categories
 
-    withdrawals = get_cash_withdrawals_with_balance()
+    balances = get_cash_balance_by_account()
 
-    if not withdrawals:
+    if not balances:
         st.info("No cash withdrawals found. ATM withdrawals from statements will appear here automatically.")
         return
 
     # Summary metrics
-    total_withdrawn = sum(w.get("Withdrawal Amount", 0) for w in withdrawals)
-    total_remaining = sum(w.get("Actual Remaining", 0) for w in withdrawals)
-    total_spent = total_withdrawn - total_remaining
+    total_withdrawn = sum(b["withdrawn"] for b in balances.values())
+    total_spent = sum(b["spent"] for b in balances.values())
+    total_remaining = sum(b["remaining"] for b in balances.values())
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -1015,59 +1015,55 @@ def render_cash_tab():
 
     st.markdown("---")
 
-    # Two columns: withdrawals list + add spend form
+    # Two columns: account balances + add spend form
     col_left, col_right = st.columns([1, 1])
 
     with col_left:
-        st.markdown("### ATM Withdrawals")
-        for w in sorted(withdrawals, key=lambda x: x.get("Date", ""), reverse=True):
-            remaining = w.get("Actual Remaining", 0)
-            amount = w.get("Withdrawal Amount", 0)
-            allocated_pct = ((amount - remaining) / amount * 100) if amount > 0 else 0
+        st.markdown("### Cash Balance by Account")
 
-            color = "#04d38c" if remaining <= 0 else "#1a73e8"
+        for account, bal in sorted(balances.items(), key=lambda x: x[1]["remaining"], reverse=True):
+            withdrawn = bal["withdrawn"]
+            spent = bal["spent"]
+            remaining = bal["remaining"]
+            spent_pct = (spent / withdrawn * 100) if withdrawn > 0 else 0
+
+            color = "#04d38c" if remaining > 0 else "#94a3b8"
 
             st.markdown(f"""
             <div style="border-left: 4px solid {color}; background: white; border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div>
-                        <div style="font-weight: 600; color: #1e293b;">{w.get('Date')}</div>
-                        <div style="font-size: 0.875rem; color: #64748b;">{w.get('Source Account')}</div>
+                        <div style="font-weight: 600; color: #1e293b; font-size: 1.1rem;">{account}</div>
+                        <div style="font-size: 0.875rem; color: #64748b;">Withdrawn: ${withdrawn:,.0f} | Spent: ${spent:,.0f}</div>
                     </div>
                     <div style="text-align: right;">
-                        <div style="font-size: 1.25rem; font-weight: 700; color: #1e293b;">${amount:,.0f}</div>
-                        <div style="font-size: 0.875rem; color: {'#04d38c' if remaining <= 0 else '#ef4444'};">${remaining:,.0f} left</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: {'#04d38c' if remaining > 0 else '#94a3b8'};">${remaining:,.0f}</div>
+                        <div style="font-size: 0.75rem; color: #64748b;">remaining</div>
                     </div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-            with st.expander(f"View spends from this withdrawal"):
-                spends = get_cash_spends_for_withdrawal(w["Cash TX ID"])
-                if spends:
-                    df_spends = pd.DataFrame(spends)[['Date', 'Description', 'Amount', 'Category']]
-                    st.dataframe(df_spends, hide_index=True, use_container_width=True)
-                else:
-                    st.info("No spends recorded yet")
-
     with col_right:
         st.markdown("### Add Cash Spend")
 
-        available_withdrawals = {
-            f"{w['Date']} - ${w.get('Withdrawal Amount', 0):,.0f} (${w.get('Actual Remaining', 0):,.0f} left)": w['Cash TX ID']
-            for w in withdrawals if w.get('Actual Remaining', 0) > 0
-        }
+        # Filter accounts with available cash
+        available_accounts = {account: bal for account, bal in balances.items() if bal["remaining"] > 0}
 
-        if not available_withdrawals:
-            st.warning("All withdrawals fully allocated. Make a new ATM withdrawal to add cash spends.")
+        if not available_accounts:
+            st.warning("No cash available. Make an ATM withdrawal to track cash spends.")
         else:
-            selected_display = st.selectbox("From Withdrawal", list(available_withdrawals.keys()))
-            selected_id = available_withdrawals[selected_display]
+            # Account selector
+            account_options = {
+                f"{account} (${bal['remaining']:,.0f} available)": account
+                for account, bal in available_accounts.items()
+            }
 
-            selected_w = next(w for w in withdrawals if w['Cash TX ID'] == selected_id)
-            max_amt = selected_w.get('Actual Remaining', 0)
+            selected_display = st.selectbox("From Account", list(account_options.keys()))
+            selected_account = account_options[selected_display]
+            max_amt = available_accounts[selected_account]["remaining"]
 
-            st.info(f"Available cash: ${max_amt:,.2f}")
+            st.info(f"💰 Available cash: ${max_amt:,.2f}")
 
             with st.form("add_cash_form"):
                 spend_date = st.date_input("Date", value=datetime.now().date())
@@ -1082,7 +1078,7 @@ def render_cash_tab():
                     if not spend_desc:
                         st.error("Please enter a description")
                     else:
-                        result = add_cash_spend(selected_id, spend_date.strftime("%Y-%m-%d"), spend_desc, spend_amt, spend_cat)
+                        result = add_cash_spend(selected_account, spend_date.strftime("%Y-%m-%d"), spend_desc, spend_amt, spend_cat)
                         if result["success"]:
                             st.success(result["message"])
                             st.cache_data.clear()
