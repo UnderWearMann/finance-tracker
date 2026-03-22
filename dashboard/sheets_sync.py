@@ -86,9 +86,9 @@ def setup_spreadsheet_structure(spreadsheet: gspread.Spreadsheet):
     except gspread.WorksheetNotFound:
         accounts = spreadsheet.add_worksheet("Accounts", rows=50, cols=12)
 
-    accounts.update('A1:J1', [[
-        "Account Name", "Type", "Last Statement Date", "Currency",
-        "Current Balance", "Institution Name", "Card Last Four",
+    accounts.update('A1:K1', [[
+        "Account ID", "Account Name", "Type", "Last Statement Date", "Currency",
+        "Current Balance", "Institution Name", "Account Last Four",
         "Card Scheme", "Credit Limit", "Notes"
     ]])
 
@@ -173,6 +173,10 @@ def sync_parsed_data(parsed_data: dict) -> dict:
     parsed_at = parsed_data.get("parsed_at", datetime.now().isoformat())
     institution = statement_info.get("institution_name", "")
 
+    # Generate unique account ID from institution + account number
+    account_last_four = statement_info.get("account_last_four", "") or statement_info.get("card_last_four", "")
+    account_id = f"{institution}_{account_last_four}" if account_last_four else account_name
+
     for tx in parsed_data.get("transactions", []):
         tx_id = generate_transaction_id(
             tx.get("date", ""),
@@ -192,7 +196,7 @@ def sync_parsed_data(parsed_data: dict) -> dict:
             tx.get("currency", "HKD"),
             tx.get("category", "Other"),
             tx.get("merchant", ""),
-            account_name,
+            account_id,
             period,
             source_file,
             parsed_at,
@@ -219,32 +223,48 @@ def sync_parsed_data(parsed_data: dict) -> dict:
 
 
 def update_account_info(spreadsheet: gspread.Spreadsheet, account_name: str, statement_info: dict):
-    """Update or add account information with enhanced metadata."""
+    """Update or add account information using Institution + Account Last 4 as unique key."""
     accounts_sheet = spreadsheet.worksheet("Accounts")
     existing_accounts = accounts_sheet.get_all_values()
 
-    # Find if account exists
+    institution = statement_info.get("institution_name", "Unknown")
+    account_last_four = statement_info.get("account_last_four", "") or statement_info.get("card_last_four", "")
+    account_id = f"{institution}_{account_last_four}" if account_last_four else account_name
+
+    # Generate friendly display name
+    account_type = statement_info.get("account_type", "unknown")
+    type_map = {
+        "bank_checking": "Checking",
+        "bank_savings": "Savings",
+        "credit_card": "Credit Card",
+        "investment": "Investment"
+    }
+    friendly_type = type_map.get(account_type, account_type)
+    display_name = f"{institution} {friendly_type} ({account_last_four})" if account_last_four else account_name
+
+    # Find if account exists by Account ID (column A)
     account_row = None
     for i, row in enumerate(existing_accounts[1:], start=2):
-        if row and row[0] == account_name:
+        if row and row[0] == account_id:
             account_row = i
             break
 
     account_data = [
-        account_name,
+        account_id,
+        display_name,
         statement_info.get("account_type", "unknown"),
         statement_info.get("period_end", ""),
         statement_info.get("currency", "HKD"),
         statement_info.get("closing_balance", ""),
-        statement_info.get("institution_name", ""),
-        statement_info.get("card_last_four", ""),
+        institution,
+        account_last_four,
         statement_info.get("card_scheme", ""),
         statement_info.get("credit_limit", ""),
         ""
     ]
 
     if account_row:
-        accounts_sheet.update(f'A{account_row}:J{account_row}', [account_data])
+        accounts_sheet.update(f'A{account_row}:K{account_row}', [account_data])
     else:
         accounts_sheet.append_row(account_data)
 
@@ -391,66 +411,6 @@ def apply_category_rules(transactions: List[dict]) -> List[dict]:
                 break
 
     return transactions
-
-
-def update_transaction_category(tx_id: str, new_category: str) -> bool:
-    """Update the category of a single transaction."""
-    try:
-        client = get_sheets_client()
-        spreadsheet = get_or_create_spreadsheet(client)
-        transactions_sheet = spreadsheet.worksheet("Transactions")
-
-        data = transactions_sheet.get_all_values()
-        header = data[0]
-
-        try:
-            cat_col_idx = header.index("Category")
-        except ValueError:
-            cat_col_idx = 5
-
-        for i, row in enumerate(data[1:], start=2):
-            if row and row[0] == tx_id:
-                col_letter = chr(ord('A') + cat_col_idx)
-                transactions_sheet.update(f'{col_letter}{i}', [[new_category]])
-                return True
-
-        return False
-    except Exception:
-        return False
-
-
-def update_transaction_categories_bulk(tx_ids: List[str], new_category: str) -> bool:
-    """Update the category of multiple transactions."""
-    try:
-        client = get_sheets_client()
-        spreadsheet = get_or_create_spreadsheet(client)
-        transactions_sheet = spreadsheet.worksheet("Transactions")
-
-        data = transactions_sheet.get_all_values()
-        header = data[0]
-
-        try:
-            cat_col_idx = header.index("Category")
-        except ValueError:
-            cat_col_idx = 5
-
-        col_letter = chr(ord('A') + cat_col_idx)
-
-        updates = []
-        for i, row in enumerate(data[1:], start=2):
-            if row and row[0] in tx_ids:
-                updates.append({
-                    'range': f'{col_letter}{i}',
-                    'values': [[new_category]]
-                })
-
-        if updates:
-            transactions_sheet.batch_update(updates)
-            return True
-
-        return False
-    except Exception:
-        return False
 
 
 # ============================================
